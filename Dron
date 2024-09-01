@@ -1,0 +1,555 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <conio.h>
+#include <windows.h>
+#include <time.h>
+
+// Определение размеров игрового поля и задержки
+#define MAX_X 50
+#define MAX_Y 25
+#define INITIAL_DELAY 100
+#define MAX_UNRIPE_PUMPKINS 90
+#define MAX_RIPE_PUMPKINS 5
+
+// Перечисление направлений движения
+enum direction { LEFT, RIGHT, UP, DOWN };
+
+// Глобальные переменные для режима игры и количества дронов
+int autoMode = 2;
+int droneCount = 2;
+
+// Структура для хранения координат хвоста
+typedef struct tail_t {
+    int x;
+    int y;
+} tail_t;
+
+// Структура для хранения информации о дроне
+typedef struct drone_t {
+    int x;
+    int y;
+    tail_t *tail;
+    size_t tsize;
+    int level;
+    int color;
+    enum direction dir;
+} drone_t;
+
+// Структура для хранения информации о тыкве
+typedef struct pumpkin_t {
+    int x;
+    int y;
+    int ripe; // 0 - неспелая, 1 - спелая
+} pumpkin_t;
+
+// Инициализация дрона
+drone_t initDrone(int x, int y, size_t tsize, int color, enum direction dir) {
+    drone_t drone;
+    drone.x = x;
+    drone.y = y;
+    drone.tsize = tsize;
+    drone.tail = (tail_t *)malloc(sizeof(tail_t) * 100);
+    drone.level = 0;
+    drone.color = color;
+    drone.dir = dir;
+    for (int i = 0; i < tsize; ++i) {
+        drone.tail[i].x = x + i + 1;
+        drone.tail[i].y = y;
+    }
+    return drone;
+}
+
+// Генерация неспелых тыкв
+void generateUnripePumpkins(pumpkin_t unripePumpkins[]) {
+    int index = 0;
+    for (int x = 0; x < MAX_X; x += 5) {
+        for (int y = 0; y < MAX_Y; y += 3) {
+            if (index < MAX_UNRIPE_PUMPKINS) {
+                unripePumpkins[index].x = x;
+                unripePumpkins[index].y = y;
+                unripePumpkins[index].ripe = 0;
+                index++;
+            }
+        }
+    }
+}
+
+// Вывод дронов и тыкв на экран
+void printDrones(drone_t drones[], int droneCount, pumpkin_t ripePumpkins[], pumpkin_t unripePumpkins[], int paused, char field[MAX_X][MAX_Y]) {
+    char matrix[MAX_X][MAX_Y];
+    for (int i = 0; i < MAX_X; ++i) {
+        for (int j = 0; j < MAX_Y; ++j) {
+            matrix[i][j] = field[i][j];
+        }
+    }
+
+    // Отображение дронов и их хвостов
+    for (int d = 0; d < droneCount; ++d) {
+        matrix[drones[d].x][drones[d].y] = d == 0 ? '@' : '#';
+        for (int i = 0; i < drones[d].tsize; ++i) {
+            matrix[drones[d].tail[i].x][drones[d].tail[i].y] = d == 0 ? '*' : '+';
+        }
+    }
+
+    // Отображение спелых тыкв
+    for (int i = 0; i < MAX_RIPE_PUMPKINS; ++i) {
+        if (ripePumpkins[i].ripe) {
+            matrix[ripePumpkins[i].x][ripePumpkins[i].y] = 'Q';
+        }
+    }
+
+    // Отображение неспелых тыкв
+    for (int i = 0; i < MAX_UNRIPE_PUMPKINS; ++i) {
+        if (!unripePumpkins[i].ripe) {
+            matrix[unripePumpkins[i].x][unripePumpkins[i].y] = 'o';
+        }
+    }
+
+    // Вывод матрицы на экран с учетом цвета
+    for (int j = 0; j < MAX_Y; ++j) {
+        for (int i = 0; i < MAX_X; ++i) {
+            if (matrix[i][j] == '@' || matrix[i][j] == '*') {
+                SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), drones[0].color);
+            } else if (matrix[i][j] == '#' || matrix[i][j] == '+') {
+                SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), drones[1].color);
+            } else if (matrix[i][j] == 'Q') {
+                SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 14);
+            } else if (matrix[i][j] == 'o') {
+                SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 10);
+            } else {
+                SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 7);
+            }
+            printf("%c", matrix[i][j]);
+        }
+        printf("\n");
+    }
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), 7);
+
+    // Вывод уровня каждого дрона
+    for (int d = 0; d < droneCount; ++d) {
+        printf("Level %d: %d\n", d + 1, drones[d].level);
+    }
+
+    // Сообщение о паузе
+    if (paused) {
+        printf("The game is suspended. Click 'P', to continue.\n");
+    } else {
+        printf("Click 'P', to pause the game.\n");
+    }
+}
+
+// Перемещение дрона
+drone_t moveDrone(drone_t drone) {
+    // Перемещение хвоста
+    for (int i = drone.tsize - 1; i > 0; i--) {
+        drone.tail[i] = drone.tail[i - 1];
+    }
+    if (drone.tsize > 0) {
+        drone.tail[0].x = drone.x;
+        drone.tail[0].y = drone.y;
+    }
+
+    // Перемещение головы в зависимости от направления
+    switch (drone.dir) {
+        case LEFT:
+            drone.x--;
+            break;
+        case RIGHT:
+            drone.x++;
+            break;
+        case UP:
+            drone.y--;
+            break;
+        case DOWN:
+            drone.y++;
+            break;
+    }
+
+    return drone;
+}
+
+// Проверка на допустимость направления
+int isValidDirection(enum direction currentDirection, enum direction newDirection) {
+    if (currentDirection == LEFT && newDirection == RIGHT) return 0;
+    if (currentDirection == RIGHT && newDirection == LEFT) return 0;
+    if (currentDirection == UP && newDirection == DOWN) return 0;
+    if (currentDirection == DOWN && newDirection == UP) return 0;
+    return 1;
+}
+
+// Обработка нажатий клавиш для первого дрона
+enum direction handleKey(char key, enum direction currentDirection, int* paused) {
+    switch (key) {
+        case 'w':
+        case 'W':
+            if (isValidDirection(currentDirection, UP)) return UP;
+            break;
+        case 's':
+        case 'S':
+            if (isValidDirection(currentDirection, DOWN)) return DOWN;
+            break;
+        case 'a':
+        case 'A':
+            if (isValidDirection(currentDirection, LEFT)) return LEFT;
+            break;
+        case 'd':
+        case 'D':
+            if (isValidDirection(currentDirection, RIGHT)) return RIGHT;
+            break;
+        default:
+            return currentDirection;
+    }
+    return currentDirection;
+}
+
+// Обработка нажатий клавиш для второго дрона
+enum direction handleKey2(char key, enum direction currentDirection, int* paused) {
+    switch (key) {
+        case 'i':
+        case 'I':
+            if (isValidDirection(currentDirection, UP)) return UP;
+            break;
+        case 'k':
+        case 'K':
+            if (isValidDirection(currentDirection, DOWN)) return DOWN;
+            break;
+        case 'j':
+        case 'J':
+            if (isValidDirection(currentDirection, LEFT)) return LEFT;
+            break;
+        case 'l':
+        case 'L':
+            if (isValidDirection(currentDirection, RIGHT)) return RIGHT;
+            break;
+        default:
+            return currentDirection;
+    }
+    return currentDirection;
+}
+
+// Задержка между ходами
+int getDelay(int level) {
+    return 100;
+}
+
+// Индексы тыкв, выбранные дронами
+int droneTargets[2] = {-1, -1};
+
+// Проверка, свободна ли клетка
+int isCellFree(int x, int y, drone_t drones[], int droneCount, pumpkin_t unripePumpkins[]) {
+    if (x < 0 || x >= MAX_X || y < 0 || y >= MAX_Y) {
+        return 0;
+    }
+    
+    for (int d = 0; d < droneCount; ++d) {
+        if (x == drones[d].x && y == drones[d].y) {
+            return 0;
+        }
+        for (int i = 0; i < drones[d].tsize; ++i) {
+            if (x == drones[d].tail[i].x && y == drones[d].tail[i].y) {
+                return 0;
+            }
+        }
+    }
+    
+    for (int i = 0; i < MAX_UNRIPE_PUMPKINS; ++i) {
+        if (!unripePumpkins[i].ripe && x == unripePumpkins[i].x && y == unripePumpkins[i].y) {
+            return 0;
+        }
+    }
+    
+    return 1;
+}
+
+// Поиск ближайшей спелой тыквы
+enum direction findRipePumpkin(drone_t drone, drone_t drones[], int droneCount, pumpkin_t ripePumpkins[], pumpkin_t unripePumpkins[], int droneId) {
+    int targetIndex = -1;
+    int minDistance = MAX_X + MAX_Y;
+    
+    for (int i = 0; i < MAX_RIPE_PUMPKINS; ++i) {
+        if (ripePumpkins[i].ripe && droneTargets[1 - droneId] != i) {
+            int dx = ripePumpkins[i].x - drone.x;
+            int dy = ripePumpkins[i].y - drone.y;
+            int distance = abs(dx) + abs(dy);
+            
+            if (distance < minDistance || (distance == minDistance && rand() % 2 == 0)) {
+                minDistance = distance;
+                targetIndex = i;
+            }
+        }
+    }
+    
+    droneTargets[droneId] = targetIndex;
+    
+    if (targetIndex != -1) {
+        int dx = ripePumpkins[targetIndex].x - drone.x;
+        int dy = ripePumpkins[targetIndex].y - drone.y;
+        
+        if (abs(dx) > abs(dy)) {
+            if (dx > 0 && isCellFree(drone.x + 1, drone.y, drones, droneCount, unripePumpkins)) {
+                return RIGHT;
+            } else if (dx < 0 && isCellFree(drone.x - 1, drone.y, drones, droneCount, unripePumpkins)) {
+                return LEFT;
+            }
+        }
+        
+        if (dy > 0 && isCellFree(drone.x, drone.y + 1, drones, droneCount, unripePumpkins)) {
+            return DOWN;
+        } else if (dy < 0 && isCellFree(drone.x, drone.y - 1, drones, droneCount, unripePumpkins)) {
+            return UP;
+        }
+    }
+    
+    // Если движение к цели невозможно, выбираем случайное безопасное направление
+    enum direction possibleDirections[4];
+    int count = 0;
+    
+    if (isCellFree(drone.x + 1, drone.y, drones, droneCount, unripePumpkins)) {
+        possibleDirections[count++] = RIGHT;
+    }
+    if (isCellFree(drone.x - 1, drone.y, drones, droneCount, unripePumpkins)) {
+        possibleDirections[count++] = LEFT;
+    }
+    if (isCellFree(drone.x, drone.y + 1, drones, droneCount, unripePumpkins)) {
+        possibleDirections[count++] = DOWN;
+    }
+    if (isCellFree(drone.x, drone.y - 1, drones, droneCount, unripePumpkins)) {
+        possibleDirections[count++] = UP;
+    }
+    
+    if (count > 0) {
+        return possibleDirections[rand() % count];
+    }
+    
+    return drone.dir;
+}
+
+// Меню начала игры
+void startMenu(int* color1, int* color2, int* mode, int* autoMode, int* droneCount) {
+    int choice;
+    printf("Drone\n");
+    printf("-------\n");
+    printf("1. Start the game\n");
+    printf("2. Choose the color of the drone\n");
+    printf("3. Choose the control mode\n");
+    printf("4. Select the number of drones\n");
+    printf("5. Exit the game\n");
+    printf("-------\n");
+    printf("Enter your choice: ");
+    scanf("%d", &choice);
+    switch (choice) {
+        case 1:
+            return;
+        case 2:
+            printf("Choose the color of the drone 1:\n");
+            printf("1. Green\n");
+            printf("2. Red\n");
+            printf("3. Blue\n");
+            scanf("%d", color1);
+            if (*color1 < 1 || *color1 > 3) {
+                printf("Invalid choice\n");
+                startMenu(color1, color2, mode, autoMode, droneCount);
+            } else {
+                *color1 += 1;
+            }
+            printf("Choose the color of the drone 2:\n");
+            printf("1. Green\n");
+            printf("2. Red\n");
+            printf("3. Blue\n");
+            scanf("%d", color2);
+            if (*color2 < 1 || *color2 > 3) {
+                printf("Invalid choice\n");
+                startMenu(color1, color2, mode, autoMode, droneCount);
+            } else {
+                *color2 += 1; // Приведение к нужному значению
+            }
+            startMenu(color1, color2, mode, autoMode, droneCount);
+            break;
+        case 3:
+            printf("Select the control mode:\n");
+            printf("1. Manual control\n");
+            printf("2. Automatic game\n");
+            scanf("%d", autoMode);
+            if (*autoMode < 1 || *autoMode > 2) {
+                printf("Invalid choice\n");
+                startMenu(color1, color2, mode, autoMode, droneCount);
+            } else if (*autoMode == 1) {
+                return;
+            } else {
+                printf("Automatic game selected. Press 'P' to pause/continue the game.\n");
+                return;
+            }
+            break;
+        case 4:
+            printf("Select the number of drones (1 or 2):\n");
+            scanf("%d", droneCount);
+            if (*droneCount < 1 || *droneCount > 2) {
+                printf("Invalid choice\n");
+                startMenu(color1, color2, mode, autoMode, droneCount);
+            }
+            startMenu(color1, color2, mode, autoMode, droneCount);
+            break;
+        case 5:
+            exit(0);
+            break;
+        default:
+            printf("Invalid choice\n");
+            startMenu(color1, color2, mode, autoMode, droneCount);
+    }
+}
+
+// Проверка на столкновения
+int checkCollision(drone_t drones[], int droneCount, pumpkin_t unripePumpkins[]) {
+    for (int d = 0; d < droneCount; ++d) {
+        // Проверка столкновения дронов
+        for (int e = d + 1; e < droneCount; ++e) {
+            if (drones[d].x == drones[e].x && drones[d].y == drones[e].y) {
+                return 1;
+            }
+        }
+
+        // Проверка столкновения с хвостом
+        for (int i = 0; i < drones[d].tsize; ++i) {
+            for (int e = 0; e < droneCount; ++e) {
+                if (d != e) {
+                    if (drones[e].x == drones[d].tail[i].x && drones[e].y == drones[d].tail[i].y) {
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        // Проверка столкновения с неспелыми тыквами
+        for (int i = 0; i < MAX_UNRIPE_PUMPKINS; ++i) {
+            if (!unripePumpkins[i].ripe &&
+                (drones[d].x == unripePumpkins[i].x && drones[d].y == unripePumpkins[i].y)) {
+                return 1;
+            }
+        }
+
+        // Проверка выхода за границы поля
+        if (drones[d].x < 0 || drones[d].x >= MAX_X || drones[d].y < 0 || drones[d].y >= MAX_Y) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int main() {
+    int pausedFlag = 0;
+    srand(time(NULL));
+    int color1 = 1;
+    int color2 = 2;
+    int mode = 2;
+
+    // Запуск меню
+    startMenu(&color1, &color2, &mode, &autoMode, &droneCount);
+
+    // Инициализация дронов
+    drone_t drones[2];
+    drones[0] = initDrone(10, 5, 0, color1, LEFT);
+    if (droneCount > 1) {
+        drones[1] = initDrone(5, 10, 0, color2, RIGHT);
+    }
+
+    // Инициализация тыкв
+    pumpkin_t ripePumpkins[MAX_RIPE_PUMPKINS] = {0};
+    pumpkin_t unripePumpkins[MAX_UNRIPE_PUMPKINS];
+    generateUnripePumpkins(unripePumpkins);
+    int paused = 0;
+
+    // Инициализация поля
+    char field[MAX_X][MAX_Y];
+    for (int i = 0; i < MAX_X; ++i) {
+        for (int j = 0; j < MAX_Y; ++j) {
+            field[i][j] = ' ';
+        }
+    }
+
+    // Основной игровой цикл
+    while (1) {
+        // Обработка ввода пользователя для ручного режима
+        if (autoMode == 1 && !pausedFlag) {
+            if (kbhit()) {
+                char key = getch();
+                if (key == 'p' || key == 'P') {
+                    paused = !paused;
+                } else if (key == 'w' || key == 'W' || key == 'a' || key == 'A' || key == 's' || key == 'S' || key == 'd' || key == 'D') {
+                    drones[0].dir = handleKey(key, drones[0].dir, &paused);
+                } else if (droneCount > 1 && (key == 'i' || key == 'I' || key == 'j' || key == 'J' || key == 'k' || key == 'K' || key == 'l' || key == 'L')) {
+                    drones[1].dir = handleKey2(key, drones[1].dir, &paused);
+                }
+            }
+        } else if (autoMode == 2 && !pausedFlag) {
+            // Автоматический режим
+            for (int d = 0; d < droneCount; ++d) {
+                drones[d].dir = findRipePumpkin(drones[d], drones, droneCount, ripePumpkins, unripePumpkins, d);
+            }
+        }
+
+        if (!paused) {
+            // Перемещение дронов
+            for (int d = 0; d < droneCount; ++d) {
+                drones[d] = moveDrone(drones[d]);
+            }
+
+            // Проверка на столкновения
+            if (checkCollision(drones, droneCount, unripePumpkins)) {
+                printf("Game over! Collision detected.\n");
+                break;
+            }
+
+            // Проверка на сбор спелых тыкв
+            for (int d = 0; d < droneCount; ++d) {
+                for (int i = 0; i < MAX_RIPE_PUMPKINS; ++i) {
+                    if (ripePumpkins[i].ripe && drones[d].x == ripePumpkins[i].x && drones[d].y == ripePumpkins[i].y) {
+                        drones[d].level++;
+                        ripePumpkins[i].ripe = 0;
+                        drones[d].tail[drones[d].tsize].x = drones[d].x;
+                        drones[d].tail[drones[d].tsize].y = drones[d].y;
+                        drones[d].tsize++;
+                    }
+                }
+            }
+
+            // Обновление спелых тыкв
+            for (int i = 0; i < MAX_RIPE_PUMPKINS; ++i) {
+                if (!ripePumpkins[i].ripe) {
+                    int unripeCount = 0;
+                    int availableIndexes[MAX_UNRIPE_PUMPKINS];
+
+                    for (int j = 0; j < MAX_UNRIPE_PUMPKINS; ++j) {
+                        if (!unripePumpkins[j].ripe) {
+                            availableIndexes[unripeCount++] = j;
+                        }
+                    }
+
+                    if (unripeCount > 0) {
+                        int randomIndex = availableIndexes[rand() % unripeCount];
+                        unripePumpkins[randomIndex].ripe = 1;
+                        ripePumpkins[i] = unripePumpkins[randomIndex];
+                    }
+                }
+            }
+        }
+
+        // Очистка экрана и вывод состояния игры
+        system("cls");
+        printDrones(drones, droneCount, ripePumpkins, unripePumpkins, paused, field);
+
+        // Задержка между ходами
+        if (!paused) {
+            Sleep(getDelay(drones[0].level));
+        } else {
+            Sleep(1000);
+        }
+    }
+
+    // Освобождение памяти
+    for (int d = 0; d < droneCount; ++d) {
+        free(drones[d].tail);
+    }
+
+    return 0;
+}
